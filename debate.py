@@ -320,7 +320,7 @@ def main():
     MODEL_NAMES = [
         "deepseek-r1:1.5b",
         "gemma3:1b",
-        "llama3.2:1.b",
+        "llama3.2:1b",
     ]
     # Make sure all these names appear in `ollama list`
 
