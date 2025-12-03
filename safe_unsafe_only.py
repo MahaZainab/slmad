@@ -287,7 +287,7 @@ def main():
     # You can change these to whatever you like:
     DATA_PATH = "train.jsonl"   # path to your dataset
     # Add more models that you have pulled in Ollama, e.g. ["llama3", "mistral", "phi3"]
-    MODELS_TO_TEST = ["deepseek-r1:1.5b"]
+    MODELS_TO_TEST = ["gemma3.b"]
     N_EXAMPLES = 10             # how many examples to use for evaluation/plots
 
     print("Loading dataset from", DATA_PATH)
