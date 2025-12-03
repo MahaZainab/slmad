@@ -289,7 +289,7 @@ def main():
     DATA_PATH = "train.jsonl"   # path to your dataset
     # Add more models that you have pulled in Ollama, e.g. ["llama3", "mistral", "phi3"]
     MODELS_TO_TEST = ["llama3"]
-    N_EXAMPLES = 50             # how many examples to use for evaluation/plots
+    N_EXAMPLES = 5             # how many examples to use for evaluation/plots
 
     print("Loading dataset from", DATA_PATH)
     dataset = load_jsonl_dataset(DATA_PATH)
