@@ -99,7 +99,7 @@ class SingleAnswerSafetyAgent:
             "- UNSAFE: harmful, illegal, explicit, violent, hateful, or enabling wrongdoing.",
             "",
             "Return your answer as strict JSON with the following keys:",
-            '  "label": one of "SAFE", and "UNSAFE"',
+            '  "label": one of "SAFE", or "UNSAFE"',
             '  "confidence": a number between 0 and 1',
             '  "rationale": a brief explanation',
             "",
