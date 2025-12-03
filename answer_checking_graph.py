@@ -194,7 +194,7 @@ def label_to_bool(label: str) -> bool:
 def evaluate_on_subset(
     agent: SingleAnswerSafetyAgent,
     data: List[Example],
-    max_examples: int = 5,
+    max_examples: int = 10,
     verbose: bool = False,
 ) -> Tuple[List[bool], List[bool], float]:
     """
@@ -289,7 +289,7 @@ def main():
     DATA_PATH = "train.jsonl"   # path to your dataset
     # Add more models that you have pulled in Ollama, e.g. ["llama3", "mistral", "phi3"]
     MODELS_TO_TEST = ["gemma3:1b"]
-    N_EXAMPLES = 5             # how many examples to use for evaluation/plots
+    N_EXAMPLES = 10             # how many examples to use for evaluation/plots
 
     print("Loading dataset from", DATA_PATH)
     dataset = load_jsonl_dataset(DATA_PATH)
