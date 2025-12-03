@@ -526,7 +526,7 @@ def main():
     MODEL_NAMES = [
         "deepseek-r1:1.5b",   # treated as "Phi" in your diagram
         "gemma3:1b",
-        "llama3.2:1.b",
+        "llama3.2:1b",
     ]
     AGENT_SHORT_NAMES = ["Phi", "Gemma", "Llama"]  # order must match MODEL_NAMES
 
