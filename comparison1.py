@@ -468,7 +468,7 @@ def plot_baseline_vs_debate(baseline_acc: float, debate_acc: float, out_path: st
 def main():
     # ---- config ----
     DATA_PATH = "train.jsonl"   # or "train.jsonl"
-    N_EXAMPLES = 10                 # how many examples to run debate on
+    N_EXAMPLES = 20                # how many examples to run debate on
 
     MODEL_NAMES = [
         "deepseek-r1:1.5b",
@@ -555,3 +555,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
