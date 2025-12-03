@@ -315,7 +315,7 @@ def compute_accuracy(gold: List[bool], pred: List[bool]) -> float:
 
 def main():
     # ---- config ----
-    DATA_PATH = "train_100.jsonl"   # or "train.jsonl"
+    DATA_PATH = "train.jsonl"   # or "train.jsonl"
     N_EXAMPLES = 20                 # how many examples to run debate on
 
     MODEL_NAMES = [
