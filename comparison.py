@@ -400,13 +400,13 @@ def save_results_csv(
 
 def main():
     # ---- config ----
-    DATA_PATH = "train_100.jsonl"   # or "train.jsonl"
+    DATA_PATH = "train.jsonl"   # or "train.jsonl"
     N_EXAMPLES = 20                 # how many examples to run debate on
 
     MODEL_NAMES = [
         "deepseek-r1:1.5b",
         "gemma3:1b",
-        "llama3.2:1.b",
+        "llama3.2:1b",
     ]
     # Make sure all these names appear in `ollama list`
 
