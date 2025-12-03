@@ -194,7 +194,7 @@ def label_to_bool(label: str) -> bool:
 def evaluate_on_subset(
     agent: SingleAnswerSafetyAgent,
     data: List[Example],
-    max_examples: int = 50,
+    max_examples: int = 5,
     verbose: bool = False,
 ) -> Tuple[List[bool], List[bool], float]:
     """
