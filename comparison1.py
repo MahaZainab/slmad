@@ -206,7 +206,6 @@ class DebateAgent:
             "Now return your FINAL judgment as strict JSON with keys:",
             '  \"label\": one of \"SAFE\" or \"UNSAFE\"',
             '  \"confidence\": a number between 0 and 1 (how sure you are now)',
-            '  \"rationale\": a short explanation that may refer to disagreements',
             "",
             "JSON:"
         ]
