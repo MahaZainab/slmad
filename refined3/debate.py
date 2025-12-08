@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
-Multi-Agent Debate for Answer Safety with Ollama (SAFE / UNSAFE) – fixed version
+Multi-Agent Debate for Answer Safety with Ollama (SAFE / UNSAFE) – Fixed Version
 
-Key changes to prevent Safe collapse:
+Key safety refinements:
   - If Round-1 aggregator predicts SAFE, we keep that label (no debate).
   - Debate is only used when Round-1 aggregator predicts UNSAFE.
   - Round-2 prompt emphasizes avoiding false alarms and requires explicit
     evidence for UNSAFE.
-  - Aggregator penalizes UNSAFE votes slightly (higher burden of proof).
+  - Moderator uses a small penalty on UNSAFE confidence during debate
+    (higher burden of proof for UNSAFE).
+
+Outputs:
+  - Prints per-example details.
+  - Saves:
+      * debate_results.csv   (user-facing table)
+      * debate_results.jsonl (detailed nested data)
+      * classwise_gold_r1_debate.png (Gold vs Round1 vs Debate graph)
 """
 
 import json
@@ -122,6 +130,7 @@ class DebateAgent:
                 confidence = self._safe_float(obj.get("confidence", 0.5))
                 rationale = str(obj.get("rationale", rationale))
         except Exception:
+            # fall back to defaults
             pass
 
         return label, confidence, rationale
@@ -252,9 +261,9 @@ class DebateResult:
     debate_is_safe: bool
 
 
-def moderate(judgments: List[AgentJudgment], unsafe_penalty: float = 0.15) -> Tuple[str, bool]:
+def moderate(judgments: List[AgentJudgment], unsafe_penalty: float = 0.0) -> Tuple[str, bool]:
     """
-    Confidence-weighted majority vote with a SMALL penalty on UNSAFE
+    Confidence-weighted majority vote with optional small penalty on UNSAFE
     to avoid over-flagging.
 
     unsafe_penalty > 0 means UNSAFE needs slightly more evidence than SAFE.
@@ -284,11 +293,11 @@ def run_debate_on_example(example: Example, agents: List[DebateAgent]) -> Debate
         j1 = ag.judge_round1(example)
         r1.append(j1)
 
-    baseline_label, baseline_is_safe = moderate(r1)
+    # Baseline uses NO unsafe penalty (pure vote on Round-1)
+    baseline_label, baseline_is_safe = moderate(r1, unsafe_penalty=0.0)
 
-    # ----- Debate policy -----
-    # If Round-1 aggregator says SAFE:
-    #   -> We keep SAFE and DO NOT run debate (to avoid losing good safe answers).
+    # ----- Debated label policy -----
+    # If Round-1 says SAFE -> keep SAFE, skip debate
     if baseline_is_safe:
         r2 = r1
         debate_label, debate_is_safe = baseline_label, baseline_is_safe
@@ -302,8 +311,7 @@ def run_debate_on_example(example: Example, agents: List[DebateAgent]) -> Debate
             debate_is_safe=debate_is_safe,
         )
 
-    # If Round-1 says UNSAFE:
-    #   -> We use debate ONLY to check if it's a false alarm.
+    # If Round-1 says UNSAFE -> run debate to see if it's a false alarm
     r2: List[AgentJudgment] = []
     for ag in agents:
         self_prev = next(j for j in r1 if j.agent_name == ag.agent_name)
@@ -311,7 +319,7 @@ def run_debate_on_example(example: Example, agents: List[DebateAgent]) -> Debate
         j2 = ag.judge_round2(example, self_prev, peers)
         r2.append(j2)
 
-    # After debate, we still use the biased moderator with UNSAFE penalty
+    # Debate uses UNSAFE penalty (higher burden for UNSAFE)
     debate_label, debate_is_safe = moderate(r2, unsafe_penalty=0.15)
 
     return DebateResult(
@@ -324,3 +332,302 @@ def run_debate_on_example(example: Example, agents: List[DebateAgent]) -> Debate
         debate_is_safe=debate_is_safe,
     )
 
+
+def compute_accuracy(gold: List[bool], pred: List[bool]) -> float:
+    total = len(gold)
+    if total == 0:
+        return 0.0
+    correct = sum(1 for g, p in zip(gold, pred) if g == p)
+    return correct / total
+
+
+def compute_classwise_accuracy(
+    gold: List[bool],
+    baseline: List[bool],
+    debate: List[bool],
+) -> Tuple[float, float, float, float]:
+    """
+    Returns:
+      safe_baseline, safe_debate, unsafe_baseline, unsafe_debate
+    where each is accuracy restricted to that gold class.
+    """
+    idx_safe = [i for i, g in enumerate(gold) if g]
+    idx_unsafe = [i for i, g in enumerate(gold) if not g]
+
+    def class_acc(indices, preds):
+        if not indices:
+            return 0.0
+        correct = sum(1 for i in indices if preds[i] == gold[i])
+        return correct / len(indices)
+
+    safe_baseline = class_acc(idx_safe, baseline)
+    safe_debate = class_acc(idx_safe, debate)
+    unsafe_baseline = class_acc(idx_unsafe, baseline)
+    unsafe_debate = class_acc(idx_unsafe, debate)
+
+    return safe_baseline, safe_debate, unsafe_baseline, unsafe_debate
+
+
+def compute_gold_distribution(gold: List[bool]) -> Tuple[float, float]:
+    """
+    Returns:
+      gold_safe_rate, gold_unsafe_rate
+    """
+    total = len(gold)
+    if total == 0:
+        return 0.0, 0.0
+    n_safe = sum(1 for g in gold if g)
+    n_unsafe = total - n_safe
+    return n_safe / total, n_unsafe / total
+
+
+# =============================
+# 4. CSV & JSONL saving
+# =============================
+
+def save_results_csv(
+    path: str,
+    results: List[DebateResult],
+    agents: List[DebateAgent],
+    agent_short_names: List[str],
+):
+    """
+    Save per-example results into a CSV in the format:
+
+    idx | question | response |
+        Phi_r1 | Gemma_r1 | Llama_r1 | Aggregator_R1 |
+        Phi_r2 | Gemma_r2 | Llama_r2 | Aggregator_R2 | gold_is_safe
+    """
+    assert len(agents) == len(agent_short_names) == 3, \
+        "This CSV layout assumes exactly 3 agents."
+
+    fieldnames = [
+        "idx",
+        "question",
+        "response",
+        "phi_r1",
+        "gemma_r1",
+        "llama_r1",
+        "agg_r1",
+        "phi_r2",
+        "gemma_r2",
+        "llama_r2",
+        "agg_r2",
+        "gold_is_safe",
+    ]
+
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for idx, res in enumerate(results, start=1):
+            row = {
+                "idx": idx,
+                "question": res.example.prompt,
+                "response": res.example.response,
+                "gold_is_safe": res.example.is_safe,
+                "agg_r1": res.baseline_label,
+                "agg_r2": res.debate_label,
+            }
+
+            for i, short in enumerate(agent_short_names):
+                j1 = res.round1[i] if i < len(res.round1) else None
+                j2 = res.round2[i] if i < len(res.round2) else None
+                row[f"{short.lower()}_r1"] = j1.label if j1 else ""
+                row[f"{short.lower()}_r2"] = j2.label if j2 else ""
+
+            writer.writerow(row)
+
+
+def save_results_jsonl(path: str, results: List[DebateResult]):
+    """
+    Save detailed per-example results as JSONL.
+    Contains rationales, confidences, raw outputs, etc. (for analysis; not user-facing).
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        for idx, res in enumerate(results, start=1):
+            r1_by_agent = {j.agent_name: j for j in res.round1}
+            r2_by_agent = {j.agent_name: j for j in res.round2}
+            agents_dict = {}
+
+            for name in r1_by_agent.keys() | r2_by_agent.keys():
+                j1 = r1_by_agent.get(name)
+                j2 = r2_by_agent.get(name)
+                agents_dict[name] = {
+                    "round1": {
+                        "label": j1.label if j1 else None,
+                        "confidence": j1.confidence if j1 else None,
+                        "rationale": j1.rationale if j1 else None,
+                        "raw_output": j1.raw_output if j1 else None,
+                    },
+                    "round2": {
+                        "label": j2.label if j2 else None,
+                        "confidence": j2.confidence if j2 else None,
+                        "rationale": j2.rationale if j2 else None,
+                        "raw_output": j2.raw_output if j2 else None,
+                    },
+                }
+
+            obj = {
+                "idx": idx,
+                "prompt": res.example.prompt,
+                "response": res.example.response,
+                "gold_is_safe": res.example.is_safe,
+                "baseline_label": res.baseline_label,
+                "baseline_is_safe": res.baseline_is_safe,
+                "debate_label": res.debate_label,
+                "debate_is_safe": res.debate_is_safe,
+                "agents": agents_dict,
+            }
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+# =============================
+# 5. Plotting Gold vs Round1 vs Debate
+# =============================
+
+def plot_classwise_gold_baseline_debate(
+    gold_safe_rate: float,
+    gold_unsafe_rate: float,
+    safe_baseline: float,
+    safe_debate: float,
+    unsafe_baseline: float,
+    unsafe_debate: float,
+    out_path: str,
+):
+    labels = ["Safe", "Unsafe"]
+    gold_vals = [gold_safe_rate, gold_unsafe_rate]
+    baseline_vals = [safe_baseline, unsafe_baseline]
+    debate_vals = [safe_debate, unsafe_debate]
+
+    x = range(len(labels))
+    width = 0.25
+
+    plt.figure(figsize=(10, 5))
+    plt.bar([i - width for i in x], gold_vals, width, label="Gold (class ratio)")
+    plt.bar([i for i in x], baseline_vals, width, label="After Round 1 aggregation")
+    plt.bar([i + width for i in x], debate_vals, width, label="After Debate")
+    plt.xticks(list(x), labels)
+    plt.ylim(0.0, 1.0)
+    plt.ylabel("Accuracy / Class Ratio")
+    plt.title("Safe vs Unsafe: Gold vs Round 1 vs Debate")
+
+    for i, v in enumerate(gold_vals):
+        plt.text(i - width, v + 0.02, f"{v:.2f}", ha="center")
+    for i, v in enumerate(baseline_vals):
+        plt.text(i, v + 0.02, f"{v:.2f}", ha="center")
+    for i, v in enumerate(debate_vals):
+        plt.text(i + width, v + 0.02, f"{v:.2f}", ha="center")
+
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
+
+
+# =============================
+# 6. Main
+# =============================
+
+def main():
+    # ---- config ----
+    DATA_PATH = "train_100.jsonl"   # or "train.jsonl"
+    N_EXAMPLES = 20                 # how many examples to run debate on
+
+    MODEL_NAMES = [
+        "deepseek-r1:1.5b",   # mapped to "Phi"
+        "gemma3:1b",
+        "llama3.2:1.b",
+    ]
+    AGENT_SHORT_NAMES = ["Phi", "Gemma", "Llama"]  # order must match MODEL_NAMES
+
+    print("Loading dataset from", DATA_PATH)
+    dataset_all = load_jsonl_dataset(DATA_PATH)
+    if not dataset_all:
+        print("Dataset is empty; check DATA_PATH.")
+        return
+
+    dataset = dataset_all[:N_EXAMPLES]
+    print(f"Using first {len(dataset)} examples.")
+
+    # Initialize agents
+    agents: List[DebateAgent] = []
+    for i, model_name in enumerate(MODEL_NAMES, start=1):
+        agents.append(DebateAgent(model_name=model_name, agent_id=i, max_tokens=256))
+
+    gold_labels: List[bool] = []
+    baseline_preds: List[bool] = []
+    debate_preds: List[bool] = []
+    all_results: List[DebateResult] = []
+
+    for idx, ex in enumerate(dataset, start=1):
+        print("\n" + "=" * 80)
+        print(f"Example {idx}")
+        print("-" * 80)
+        print("QUESTION:")
+        print(ex.prompt)
+        print("\nANSWER (response):")
+        print(ex.response)
+        print("Gold is_safe:", ex.is_safe)
+
+        result = run_debate_on_example(ex, agents)
+        all_results.append(result)
+
+        gold_labels.append(ex.is_safe)
+        baseline_preds.append(result.baseline_is_safe)
+        debate_preds.append(result.debate_is_safe)
+
+        print("\nRound 1 judgments:")
+        for j in result.round1:
+            print(f"  {j.agent_name}: label={j.label}, conf={j.confidence:.2f}")
+
+        print("\nRound 2 judgments:")
+        for j in result.round2:
+            print(f"  {j.agent_name}: label={j.label}, conf={j.confidence:.2f}")
+
+        print(f"\nBaseline (no debate) final label: {result.baseline_label} (is_safe={result.baseline_is_safe})")
+        print(f"Debate final label: {result.debate_label} (is_safe={result.debate_is_safe})")
+        print("=" * 80)
+
+    baseline_acc = compute_accuracy(gold_labels, baseline_preds)
+    debate_acc = compute_accuracy(gold_labels, debate_preds)
+    safe_baseline, safe_debate, unsafe_baseline, unsafe_debate = compute_classwise_accuracy(
+        gold_labels, baseline_preds, debate_preds
+    )
+    gold_safe_rate, gold_unsafe_rate = compute_gold_distribution(gold_labels)
+
+    print("\n\n================ OVERALL RESULTS ================")
+    print(f"Examples evaluated: {len(gold_labels)}")
+    print(f"Baseline (no debate) overall accuracy: {baseline_acc:.3f}")
+    print(f"Debate overall accuracy:               {debate_acc:.3f}")
+    print(f"Safe class - Round1 vs Debate:         {safe_baseline:.3f} vs {safe_debate:.3f}")
+    print(f"Unsafe class - Round1 vs Debate:       {unsafe_baseline:.3f} vs {unsafe_debate:.3f}")
+    print(f"Gold class distribution: Safe={gold_safe_rate:.3f}, Unsafe={gold_unsafe_rate:.3f}")
+    print("================================================")
+
+    # Save CSV
+    csv_path = "debate_results.csv"
+    save_results_csv(csv_path, all_results, agents, AGENT_SHORT_NAMES)
+    print(f"Saved per-example table to {csv_path}")
+
+    # Save JSONL (detailed)
+    jsonl_path = "debate_results.jsonl"
+    save_results_jsonl(jsonl_path, all_results)
+    print(f"Saved detailed per-example JSONL to {jsonl_path}")
+
+    # Plot Safe / Unsafe: Gold vs Round1 vs Debate
+    plot_path = "classwise_gold_r1_debate.png"
+    plot_classwise_gold_baseline_debate(
+        gold_safe_rate,
+        gold_unsafe_rate,
+        safe_baseline,
+        safe_debate,
+        unsafe_baseline,
+        unsafe_debate,
+        plot_path,
+    )
+    print(f"Saved classwise Gold vs Round1 vs Debate plot to {plot_path}")
+
+
+if __name__ == "__main__":
+    main()
