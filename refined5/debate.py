@@ -571,13 +571,13 @@ def plot_classwise_gold_baseline_debate(
 # =============================
 
 def main():
-    DATA_PATH = "train_100.jsonl"
+    DATA_PATH = "train.jsonl"
     N_EXAMPLES = 20
 
     MODEL_NAMES = [
         "deepseek-r1:1.5b",
         "gemma3:1b",
-        "llama3.2:1.b",
+        "llama3.2:1b",
     ]
     AGENT_SHORT_NAMES = ["Phi", "Gemma", "Llama"]
 
